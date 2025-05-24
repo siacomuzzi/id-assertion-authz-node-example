@@ -142,7 +142,7 @@ const verify = async (
 
   try {
     accessTokenResponse = await exchangeIdJwtAuthzGrant({
-      tokenUrl: `${process.env.TODO_AUTH_SERVER}/token`,
+      tokenUrl: `${process.env.TODO_AUTH_SERVER}/oauth/token`,
       authorizationGrant: authGrantToken.access_token,
       scopes: ['read', 'write'],
       clientID: process.env.CLIENT2_CLIENT_ID!,

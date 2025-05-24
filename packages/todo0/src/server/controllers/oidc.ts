@@ -37,35 +37,39 @@ function getDomainFromEmail(email: string | undefined | null) {
 
 const verify = async (
   issuer: string,
+  uiProfile: { _json: { org_id: string }; _raw: string },
   profile: Profile,
   context: object,
   idToken: object | string,
+  accessToken: string,
+  refreshToken: string,
+  params: object,
   done: VerifyCallback
 ) => {
-  const externalId = profile.id;
-  const authServerOrgKey = externalId.split(':')[0];
-  const userId = externalId.split(':')[1];
-
-  if (!authServerOrgKey || !userId) {
+  // Using a hardcoded external org id just for demo purposes
+  // In a real world scenario, use uiProfile._json.org_id
+  const externalOrgId = 'customer1'; // TODO: uiProfile._json.org_id;
+  if (!externalOrgId) {
     return done(
-      new Error(`Could not parse profile.id for org and user id: ${JSON.stringify(profile)}`)
+      // eslint-disable-next-line no-underscore-dangle
+      new Error(`No external org id found, profile: ${uiProfile._raw}`)
     );
   }
-  const org = await orgFromAuthServerOrgKey(authServerOrgKey);
+  const org = await orgFromAuthServerOrgKey(externalOrgId);
   if (!org) {
-    return done(
-      new Error(`No org found for key=${authServerOrgKey}, profile: ${JSON.stringify(profile)}`)
-    );
+    // eslint-disable-next-line no-underscore-dangle
+    return done(new Error(`No org found for key=${externalOrgId}, profile: ${uiProfile._raw}`));
   }
 
   // Passport.js runs this verify function after successfully completing
   // the OIDC flow, and gives this app a chance to do something with
   // the response from the OIDC server, like create users on the fly.
 
+  const externalUserId = profile.id;
   let user = await prisma.user.findFirst({
     where: {
       orgId: org.id,
-      externalId: profile.id,
+      externalId: externalUserId,
     },
   });
 
@@ -75,8 +79,7 @@ const verify = async (
 
   // Ensure the profile response has the correct fields present to update or create a new user
   if (!profile.emails) {
-    done(new Error(`Invalid profile response: ${JSON.stringify(profile)}`));
-    return;
+    return done(new Error(`Invalid profile response: ${JSON.stringify(profile)}`));
   }
 
   try {
@@ -89,7 +92,7 @@ const verify = async (
     if (user) {
       await prisma.user.update({
         where: { id: user.id },
-        data: { externalId: profile.id },
+        data: { externalId: externalUserId },
       });
     }
 
@@ -97,9 +100,9 @@ const verify = async (
       user = await prisma.user.create({
         data: {
           org: { connect: { id: org.id } },
-          externalId: profile.id,
+          externalId: externalUserId,
           email: profile.emails![0].value,
-          name: profile.displayName ?? profile.emails[0]?.value
+          name: profile.displayName ?? profile.emails[0]?.value,
         },
       });
     }
@@ -116,15 +119,16 @@ const verify = async (
 function createStrategy(username: string) {
   return new OpenIDConnectStrategy(
     {
-      issuer: process.env.AUTH_SERVER!,
-      authorizationURL: `${process.env.AUTH_SERVER}/auth`,
-      tokenURL: `${process.env.AUTH_SERVER}/token`,
-      userInfoURL: `${process.env.AUTH_SERVER}/me`,
+      issuer: `${process.env.AUTH_SERVER}/`,
+      authorizationURL: `${process.env.AUTH_SERVER}/authorize`,
+      tokenURL: `${process.env.AUTH_SERVER}/oauth/token`,
+      userInfoURL: `${process.env.AUTH_SERVER}/userinfo`,
       clientID: process.env.CLIENT1_CLIENT_ID!,
       clientSecret: process.env.CLIENT1_CLIENT_SECRET!,
-      scope: 'profile email openid read write',
+      scope: 'profile email openid',
       callbackURL: `${process.env.TODO_SERVER}/api/openid/callback/`,
       loginHint: username,
+      skipUserProfile: false,
     },
     verify
   );
