@@ -173,7 +173,7 @@ function Home() {
           </div>
           <DebugCard>
             <pre>
-              <strong>POST {requestInfo?.request?.resource} </strong>
+              <strong>POST {requestInfo?.request?.resource}/oauth/token</strong>
             </pre>
             <pre className="pt-2">
               <strong>Request</strong>
