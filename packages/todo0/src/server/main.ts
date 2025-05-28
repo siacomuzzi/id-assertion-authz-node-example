@@ -72,6 +72,7 @@ const authenticated: RequestHandler = (req, res, next) => {
       session: false,
       passReqToCallback: true,
       failWithError: false,
+      authInfo: true,
     })(req, res, next);
     return;
   }

@@ -3,9 +3,32 @@ import { Router } from 'express';
 import { Todo } from '../../../prisma/client';
 import prisma from '../prisma';
 
+const withScopes = (requiredScopes: string[]) => (req, res, next) => {
+  if (!req.authInfo) {
+    // check scopes for JWT passport strategy only
+    return next();
+  }
+
+  const providedScopes = (req.authInfo.scope || '').split(' ');
+  const missingScopes = requiredScopes.filter(
+    (requiredScope) => !providedScopes.includes(requiredScope)
+  );
+
+  if (missingScopes.length > 0) {
+    return res.status(403).json({
+      error: 'access_denied',
+      error_description:
+        `Required scopes: ${requiredScopes.join(', ')}. ` +
+        `Provided scopes: ${providedScopes.join(', ')}. Missing: ${missingScopes.join(', ')}.`,
+    });
+  }
+
+  next();
+};
+
 const controller = Router();
 
-controller.get('/', async (req, res) => {
+controller.get('/', withScopes(['read']), async (req, res) => {
   const todos: Todo[] = await prisma.todo.findMany({
     where: {
       userId: req.user!.id,
@@ -19,7 +42,7 @@ controller.get('/', async (req, res) => {
   res.json({ todos });
 });
 
-controller.get('/:id', async (req, res) => {
+controller.get('/:id', withScopes(['read']), async (req, res) => {
   const idNum = Number(req.params.id);
 
   if (Number.isNaN(idNum)) {
@@ -36,7 +59,7 @@ controller.get('/:id', async (req, res) => {
   res.json(todo);
 });
 
-controller.post('/', async (req, res) => {
+controller.post('/', withScopes(['write']), async (req, res) => {
   const { task } = req.body;
   const { id } = req.user!;
   const todo: Todo = await prisma.todo.create({
@@ -51,7 +74,7 @@ controller.post('/', async (req, res) => {
   res.json(todo);
 });
 
-controller.put('/:id', async (req, res) => {
+controller.put('/:id', withScopes(['write']), async (req, res) => {
   const id = parseInt(req.params.id, 10);
   const { task, completed } = req.body;
   let completedAt = null;
@@ -71,7 +94,7 @@ controller.put('/:id', async (req, res) => {
   res.json(todo);
 });
 
-controller.delete('/:id', async (req, res) => {
+controller.delete('/:id', withScopes(['write']), async (req, res) => {
   const id = parseInt(req.params.id, 10);
   await prisma.todo.delete({
     where: {
