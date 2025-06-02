@@ -1,17 +1,67 @@
 import { Router } from 'express';
 import {
+  JwtAuthGrantResponse as AccessTokenResponse,
   AccessTokenResult,
-  ExchangeTokenResult,
-  exchangeIdJwtAuthzGrant,
-  requestIdJwtAuthzGrant,
+  HttpResponse,
+  OAuthBadRequest,
 } from 'id-assert-authz-grant-client';
 import passport from 'passport';
 import OpenIDConnectStrategy, { Profile, VerifyCallback } from 'passport-openidconnect';
+import qs from 'qs';
 import prisma from '../prisma';
 
 // Most of the code below comes from https://developer.okta.com/blog/2023/07/28/oidc_workshop
 export const WIKI_COOKIE_NAME = 'wiki.sid';
 const controller = Router();
+
+async function getApiAccessToken(opts: {
+  tokenUrl: string;
+  subjectToken: string;
+  resource: string;
+  scopes: string[] | undefined;
+}): Promise<AccessTokenResult> {
+  const { tokenUrl, subjectToken, resource, scopes } = opts;
+  const requestData = {
+    grant_type:
+      'urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token',
+    requested_token_type: 'http://auth0.com/oauth/token-type/federated-connection-access-token',
+    client_id: process.env.CLIENT1_CLIENT_ID!,
+    client_secret: process.env.CLIENT1_CLIENT_SECRET!,
+    resource,
+    scope: (scopes || []).join(' '),
+    subject_token: subjectToken,
+    subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+  };
+
+  const response = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: qs.stringify(requestData),
+  });
+
+  const resStatus = response.status;
+  if (resStatus === 400) {
+    return {
+      error: new OAuthBadRequest((await response.json()) as Record<string, any>),
+    };
+  }
+
+  if (resStatus > 200 && resStatus < 600) {
+    return {
+      error: new HttpResponse(
+        response.url,
+        response.status,
+        response.statusText,
+        await response.text()
+      ),
+    };
+  }
+
+  const payload = new AccessTokenResponse((await response.json()) as Record<string, any>);
+  return { payload };
+}
 
 async function orgFromDomain(domain: string) {
   const org = await prisma.organization.findFirst({
@@ -40,34 +90,39 @@ function getDomainFromEmail(email: string | undefined | null) {
 }
 
 const verify = async (
-  issuer: string,
+  _issuer: string,
+  uiProfile: { _json: { org_id: string }; _raw: string },
   profile: Profile,
-  context: object,
+  _context: object,
   idToken: object | string,
+  _accessToken: string,
+  _refreshToken: string,
+  _params: object,
   done: VerifyCallback
 ) => {
-  const externalId = profile.id;
-  const authServerOrgKey = externalId.split(':')[0];
-  const userId = externalId.split(':')[1];
-
-  if (!authServerOrgKey || !userId) {
-    throw new Error(`Could not parse profile.id for org and user id: ${JSON.stringify(profile)}`);
+  // Using a hardcoded external org id just for demo purposes
+  // In a real world scenario, use uiProfile._json.org_id
+  const externalOrgId = 'customer1'; // TODO: uiProfile._json.org_id;
+  if (!externalOrgId) {
+    // eslint-disable-next-line no-underscore-dangle
+    return done(new Error(`No external org id found, profile: ${uiProfile._raw}`));
   }
-  const org = await orgFromAuthServerOrgKey(authServerOrgKey);
+
+  const org = await orgFromAuthServerOrgKey(externalOrgId);
   if (!org) {
-    throw new Error(
-      `No org found for key=${authServerOrgKey}, profile: ${JSON.stringify(profile)}`
-    );
+    // eslint-disable-next-line no-underscore-dangle
+    return done(new Error(`No org found for key=${externalOrgId}, profile: ${uiProfile._raw}`));
   }
 
   // Passport.js runs this verify function after successfully completing
   // the OIDC flow, and gives this app a chance to do something with
   // the response from the OIDC server, like create users on the fly.
 
+  const externalUserId = profile.id;
   let user = await prisma.user.findFirst({
     where: {
       orgId: org.id,
-      externalId: profile.id,
+      externalId: externalUserId,
     },
   });
 
@@ -75,8 +130,7 @@ const verify = async (
     // Ensure the profile response has the correct fields present to update or create a new user
 
     if (!profile.emails) {
-      done(new Error(`Invalid profile response: ${JSON.stringify(profile)}`));
-      return;
+      return done(new Error(`Invalid profile response: ${JSON.stringify(profile)}`));
     }
 
     user = await prisma.user.findFirst({
@@ -88,7 +142,7 @@ const verify = async (
     if (user) {
       await prisma.user.update({
         where: { id: user.id },
-        data: { externalId: profile.id },
+        data: { externalId: externalUserId },
       });
     }
 
@@ -96,7 +150,7 @@ const verify = async (
       user = await prisma.user.create({
         data: {
           org: { connect: { id: org.id } },
-          externalId: profile.id,
+          externalId: externalUserId,
           email: profile.emails![0].value,
           name: profile.displayName ?? profile.emails[0]?.value,
         },
@@ -104,70 +158,33 @@ const verify = async (
     }
   }
 
-  // For all resources, do this flow
-  let authGrantResponse: ExchangeTokenResult;
-
-  try {
-    authGrantResponse = await requestIdJwtAuthzGrant({
-      tokenUrl: `${process.env.AUTH_SERVER}/token`,
-      resource: process.env.TODO_AUTH_SERVER,
-      subjectToken: idToken.toString(),
-      // This is hardcoded to what we use for Okta.
-      // TODO: Should be using cached value from where we got the id token
-      subjectTokenType: 'oidc',
-      scopes: ['read', 'write'], // Can be undefined, will default to empty string
-      clientID: process.env.CLIENT1_CLIENT_ID!,
-      clientSecret: process.env.CLIENT1_CLIENT_SECRET!,
-    });
-  } catch (error: unknown) {
-    // Errors if there was an issue making the request or parsing the response.
-    console.log('Failed to obtain authorization grant', { error });
-
-    done(null, user);
-    return;
-  }
-
-  if ('error' in authGrantResponse) {
-    console.log('Failed to obtain authorization grant', {
-      error: authGrantResponse.error,
-    });
-
-    done(null, user);
-    return;
-  }
-
-  const { payload: authGrantToken } = authGrantResponse;
-
+  // use Auth0 Token Vault to fetch Resource Server API Access Token
   let accessTokenResponse: AccessTokenResult;
 
   try {
-    accessTokenResponse = await exchangeIdJwtAuthzGrant({
-      tokenUrl: `${process.env.TODO_AUTH_SERVER}/token`,
-      authorizationGrant: authGrantToken.access_token,
+    accessTokenResponse = await getApiAccessToken({
+      tokenUrl: `${process.env.AUTH_SERVER}/oauth/token`,
+      subjectToken: idToken.toString(),
+      resource: process.env.TODO_SERVER!,
       scopes: ['read', 'write'],
-      clientID: process.env.CLIENT2_CLIENT_ID!,
-      clientSecret: process.env.CLIENT2_CLIENT_SECRET,
     });
   } catch (error: unknown) {
     // Errors if there was an issue making the request or parsing the response.
-    console.log('Failed to exchange the authorization grant', {
+    console.log('Failed to fetch Resource Server Access Token using Auth0 Token Vault', {
       error,
     });
 
-    done(null, user);
-    return;
+    return done(null, user);
   }
 
   if ('error' in accessTokenResponse) {
-    console.log('Failed to exchange authorization grant for access token', {
+    console.log('Failed to fetch Resource Server Access Token using Auth0 Token Vault', {
       error: accessTokenResponse.error,
     });
 
-    done(null, user);
-    return;
+    return done(null, user);
   }
 
-  // TODO: Refresh token
   const accessToken = accessTokenResponse.payload;
 
   try {
@@ -185,7 +202,7 @@ const verify = async (
         resource: 'CLIENT2',
         accessToken: accessToken.access_token,
         refreshToken: accessToken.refresh_token,
-        jagToken: authGrantToken.access_token,
+        // jagToken: authGrantToken.access_token,
         idToken: idToken.toString(),
         expiresAt: new Date(Date.now() + (accessToken.expires_in ?? 0) * 1000),
         status: 'ACTIVE',
@@ -193,7 +210,7 @@ const verify = async (
       update: {
         accessToken: accessToken.access_token,
         refreshToken: accessToken.refresh_token,
-        jagToken: authGrantToken.access_token,
+        // jagToken: authGrantToken.access_token,
         idToken: idToken.toString(),
         expiresAt: new Date(Date.now() + (accessToken.expires_in ?? 0) * 1000),
         status: 'ACTIVE',
@@ -201,26 +218,27 @@ const verify = async (
     });
   } catch (error: unknown) {
     if (error instanceof Error) {
-      done(error);
+      return done(error);
     }
-    return;
+    throw error;
   }
 
-  done(null, user);
+  return done(null, user);
 };
 
 function createStrategy(username: string) {
   return new OpenIDConnectStrategy(
     {
-      issuer: process.env.AUTH_SERVER!,
-      authorizationURL: `${process.env.AUTH_SERVER}/auth`,
-      tokenURL: `${process.env.AUTH_SERVER}/token`,
-      userInfoURL: `${process.env.AUTH_SERVER}/me`,
+      issuer: `${process.env.AUTH_SERVER}/`,
+      authorizationURL: `${process.env.AUTH_SERVER}/authorize`,
+      tokenURL: `${process.env.AUTH_SERVER}/oauth/token`,
+      userInfoURL: `${process.env.AUTH_SERVER}/userinfo`,
       clientID: process.env.CLIENT1_CLIENT_ID!,
       clientSecret: process.env.CLIENT1_CLIENT_SECRET!,
-      scope: 'profile email openid read write',
+      scope: 'profile email openid',
       callbackURL: `${process.env.WIKI_SERVER}/api/openid/callback/`,
       loginHint: username,
+      skipUserProfile: false,
     },
     verify
   );

@@ -43,7 +43,7 @@ export const jwtStrategy = new JwtStrategy(
         },
       });
 
-      done(null, user);
+      done(null, user, jwt);
     } catch (err: unknown) {
       if (err instanceof Error) {
         done(err);

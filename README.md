@@ -48,25 +48,27 @@ At the project root, copy over the default files into `.env` files:
 ```
 cp todo0/.env.default todo0/.env &&
 cp wiki0/.env.default wiki0/.env &&
-cp authorization-server/.env.wiki.default authorization-server/.env.wiki &&
 cp authorization-server/.env.todo.default authorization-server/.env.todo
 ```
 
-You must specify the following the issuer and client id in both your `.env.todo` & `.env.wiki` files to hook up the authorization server to your IDP:
+You must specify the issuer and client credentials in your `.env.todo` file to hook up the authorization server to your IDP:
 
 ```
 CUSTOMER1_AUTH_ISSUER="<FILL IN>"
 CUSTOMER1_CLIENT_ID="<FILL IN>"
+CUSTOMER1_CLIENT_SECRET="<FILL IN>"
 ```
 
-### For SAML
-For `.env.wiki` you must also specify your SAML configuraiton:
+### Auth0
+
+Finally, configure Auth0 as the authorization server for Wiki0:
+
+**packages/wiki0/.env**
 
 ```
-USE_SAML_SSO="true"
-CUSTOMER1_SAML_ENTRY_POINT="<FILL IN>"
-CUSTOMER1_SAML_ISSUER="<FILL IN>"
-CUSTOMER1_SAML_CERTIFICATE="<FILL IN>"
+AUTH_SERVER="https://wiki0.auth0lab.com"
+CLIENT1_CLIENT_ID="<wiki0-client-id>"
+CLIENT1_CLIENT_SECRET="<wiki0-client-secret>"
 ```
 
 ## Setup
@@ -96,12 +98,6 @@ yarn dev:wiki
 ```
 
 Running at http://localhost:3000/
-
-```
-yarn auth:wiki
-```
-
-Running at http://localhost:5000/
 
 ### Todo0
 
@@ -226,20 +222,21 @@ yarn dlx prisma migrate dev --name <some nice description of the changes you mad
 redis-cli --scan --pattern "<PREFIX>" | xargs redis-cli del
 ```
 
-
 # How to Integrate into an Existing Service
+
 This section outlines the steps needed to implement ID Assertion Authorization Grant in your existing application.
 There are three actors in this flow, the Identity Provider (IdP), the Requesting Application, and the Resource application.
 
 1. The Identity Provider issues `ID-JAG` tokens, and is the SSO provider for the Requesting and Resource apps for a given user.
 
-1. The **Requesting Application** is the Client application which will make the token exchange request to the IdP, ultimately requesting protected resource access from the Resource Server. 
+1. The **Requesting Application** is the Client application which will make the token exchange request to the IdP, ultimately requesting protected resource access from the Resource Server.
 
 1. The **Resource Application** is the application which owns the protected resources and must issue access tokens to the Requesting Application using the flow.
 
 You app can support this flow as a **Requesting App**, a **Resource App**, or both! We recommend integrating in only on way to get started. The section will also cover best practices based on the architecture of the given apps.
 
 ## Requesting App Steps
+
 The Requesting App is the application that is requesting or querying objects or pulling data from another application. This section describes the specific steps to build the ID Assertion Authorization Grant into the application. The Requesting App must make a separate request to IdP for an `ID-JAG` token for each unique resource the user wants to access. To prevent performance issues, follow these best practices:
 
 > [!TIP]
@@ -250,21 +247,19 @@ The Requesting App is the application that is requesting or querying objects or 
 
 1. When you want to load a resource for a user in your application logic, make a token exchange request to the IdP within the lifetime of the `id_token`. Follow [this code example](https://github.com/oktadev/id-assertion-authz-node-example/blob/2a4068213845f4907c90b40823395b14f5dc20a6/packages/wiki0/src/server/controllers/oidc.ts#L110), and/or see the specifics of the request in Section 5 of the [spec](https://datatracker.ietf.org/doc/html/draft-parecki-oauth-identity-assertion-authz-grant).
 
-
 1. Using the result of the exchange, make an `access_token` request to the authorization server. Follow [this code example](https://github.com/oktadev/id-assertion-authz-node-example/blob/2a4068213845f4907c90b40823395b14f5dc20a6/packages/wiki0/src/server/controllers/oidc.ts#L143), and/or see the specifics of the request in Section 6 of the [spec](https://datatracker.ietf.org/doc/html/draft-parecki-oauth-identity-assertion-authz-grant).
 
 1. Store and use the `access_token` as your normally would with the 3rd party resource server.
 
-
 ### Best Practices for Requesting Apps
- 1. **Do not add to login flow**. It is not necessary to preload all the JAG tokens, so it is not necessary to mint all of the possible JAG tokens at the time of login. The side effects can be extended login times for users.
- 1. **Only request when needed**. JAG tokens should be requested at the last responsible moment. JAG tokens are not meant to be long lived. Loading does not need to be bulk loaded and optimized. Trying to optimize the requests for multiple JAG tokens can result in poor performance at scale.
- 1. **Do not store JAG Tokens. Store ID, Access and Refresh Tokens**. JAGs are really short lived. As mentioned earlier, JAGs are passed from Requesting Apps to Resource Apps to exchange for an Access Token to access the Resource App. The Access Token is the valuable artifact to be stored and protected. The JAG token is effectively useless once exchanged, so it should be discarded.
 
+1.  **Do not add to login flow**. It is not necessary to preload all the JAG tokens, so it is not necessary to mint all of the possible JAG tokens at the time of login. The side effects can be extended login times for users.
+1.  **Only request when needed**. JAG tokens should be requested at the last responsible moment. JAG tokens are not meant to be long lived. Loading does not need to be bulk loaded and optimized. Trying to optimize the requests for multiple JAG tokens can result in poor performance at scale.
+1.  **Do not store JAG Tokens. Store ID, Access and Refresh Tokens**. JAGs are really short lived. As mentioned earlier, JAGs are passed from Requesting Apps to Resource Apps to exchange for an Access Token to access the Resource App. The Access Token is the valuable artifact to be stored and protected. The JAG token is effectively useless once exchanged, so it should be discarded.
 
 ## Resource App Steps
 
-The Resource App is the application that owns protected resources normally accessed via OAuth2.0 by Requesting App users. This section describes the specific steps to support the ID Assertion Authorization Grant into the application. The Resource App is responsible for validating  `ID-JAG` tokens before issuing OAuth `access_tokens` as it normally would.
+The Resource App is the application that owns protected resources normally accessed via OAuth2.0 by Requesting App users. This section describes the specific steps to support the ID Assertion Authorization Grant into the application. The Resource App is responsible for validating `ID-JAG` tokens before issuing OAuth `access_tokens` as it normally would.
 
 > [!TIP]
 > Checkout the Debug Console in the App for detailed views of the requests!
