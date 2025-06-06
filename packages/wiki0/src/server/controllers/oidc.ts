@@ -22,15 +22,14 @@ async function getApiAccessToken(opts: {
 }): Promise<AccessTokenResult> {
   const { tokenUrl, subjectToken, resource, scopes } = opts;
   const requestData = {
-    grant_type:
-      'urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token',
-    requested_token_type: 'http://auth0.com/oauth/token-type/federated-connection-access-token',
+    grant_type: 'urn:auth0:params:oauth:grant-type:token-exchange:cross-app-authorization',
+    requested_token_type: 'http://auth0.com/oauth/token-type/cross-app-authorization-access-token',
     client_id: process.env.CLIENT1_CLIENT_ID!,
     client_secret: process.env.CLIENT1_CLIENT_SECRET!,
     resource,
     scope: (scopes || []).join(' '),
     subject_token: subjectToken,
-    subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+    subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
   };
 
   const response = await fetch(tokenUrl, {
