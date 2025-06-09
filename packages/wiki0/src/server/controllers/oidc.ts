@@ -18,15 +18,17 @@ async function getApiAccessToken(opts: {
   tokenUrl: string;
   subjectToken: string;
   resource: string;
+  audience: string;
   scopes: string[] | undefined;
 }): Promise<AccessTokenResult> {
-  const { tokenUrl, subjectToken, resource, scopes } = opts;
+  const { tokenUrl, subjectToken, resource, audience, scopes } = opts;
   const requestData = {
     grant_type: 'urn:auth0:params:oauth:grant-type:token-exchange:cross-app-authorization',
     requested_token_type: 'http://auth0.com/oauth/token-type/cross-app-authorization-access-token',
     client_id: process.env.CLIENT1_CLIENT_ID!,
     client_secret: process.env.CLIENT1_CLIENT_SECRET!,
     resource,
+    audience,
     scope: (scopes || []).join(' '),
     subject_token: subjectToken,
     subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
@@ -164,7 +166,8 @@ const verify = async (
     accessTokenResponse = await getApiAccessToken({
       tokenUrl: `${process.env.AUTH_SERVER}/oauth/token`,
       subjectToken: idToken.toString(),
-      resource: process.env.TODO_SERVER!,
+      resource: process.env.TODO_AUTH_SERVER!,
+      audience: process.env.TODO_SERVER!,
       scopes: ['read', 'write'],
     });
   } catch (error: unknown) {
