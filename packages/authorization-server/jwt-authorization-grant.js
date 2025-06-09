@@ -120,12 +120,13 @@ export default async (_, provider) => {
     console.log('Client requested scopes', ctx.oidc.params.scope);
 
     const client_requested_scopes = ctx.oidc.params.scope ? ctx.oidc.params.scope.split(' ') : [];
-    const idp_authorized_scopes = claims.scope ? claims.scope.split(' ') : "";
+    const idp_authorized_scopes = claims.scope ? claims.scope.split(' ') : '';
     console.log('IdP scopes', idp_authorized_scopes);
 
-    at.scope = Array.from(
-      new Set(client_requested_scopes.filter((value) => idp_authorized_scopes.includes(value)))
-    ).join(' ');
+    // at.scope = Array.from(
+    //   new Set(client_requested_scopes.filter((value) => idp_authorized_scopes.includes(value)))
+    // ).join(' ');
+    at.scope = client_requested_scopes.join(' '); // FIXME: doing this as a workaround until Okta starts including scopes as part of the assertion
     console.log('Issued scopes', at.scope);
 
     ctx.oidc.entity('AccessToken', at);
